@@ -24,7 +24,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 WORKDIR /app
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Normalize line endings to LF in case the file was checked out with CRLF on Windows
+RUN python -c "import pathlib; p=pathlib.Path('/entrypoint.sh'); p.write_bytes(p.read_bytes().replace(b'\r\n', b'\n'))" \
+    && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
 

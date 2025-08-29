@@ -18,7 +18,8 @@ TMP_DIR="/tmp/repo-$(date +%s)-$$"
 mkdir -p "${TMP_DIR}"
 cd "${TMP_DIR}"
 
-# Configure git if proxy is provided
+# Configure git if proxy is provided and disable interactive prompts
+export GIT_TERMINAL_PROMPT=0
 if [[ -n "${GIT_PROXY}" ]]; then
   log "Configuring git proxy: ${GIT_PROXY}"
   git config --global http.proxy "${GIT_PROXY}"
@@ -26,18 +27,29 @@ if [[ -n "${GIT_PROXY}" ]]; then
 fi
 
 # Embed token into URL if provided and not already present
+REPO_URL_WITH_TOKEN="${REPO_URL}"
 if [[ -n "${REPO_TOKEN}" ]]; then
   if [[ "${REPO_URL}" =~ ^https?:// ]]; then
-    # insert token for https urls like https://token@host/path or https://oauth2:token@host/path
-    # Prefer using token as password with an oauth2 user for gitlab-style tokens
-    REPO_URL_WITH_TOKEN="${REPO_URL/https:\/\//https://oauth2:${REPO_TOKEN}@}"
+    if [[ "${REPO_URL}" == *"@"* ]]; then
+      # Already has credentials embedded; do not modify
+      REPO_URL_WITH_TOKEN="${REPO_URL}"
+    else
+      host=$(echo "${REPO_URL}" | sed -E 's#https?://([^/]+)/.*#\1#')
+      user="oauth2"
+      if [[ "${host}" == *github.com* ]]; then
+        user="x-access-token"
+      elif [[ "${host}" == *gitlab.* ]]; then
+        user="oauth2"
+      elif [[ "${host}" == *bitbucket.* ]]; then
+        user="x-token-auth"
+      fi
+      REPO_URL_WITH_TOKEN="${REPO_URL/https:\/\//https://${user}:${REPO_TOKEN}@}"
+    fi
   else
     # For ssh URLs we cannot inject token; warn user
     log "WARNING: Token provided but REPO_URL is not https-based. Token will be ignored."
     REPO_URL_WITH_TOKEN="${REPO_URL}"
   fi
-else
-  REPO_URL_WITH_TOKEN="${REPO_URL}"
 fi
 
 log "Cloning repository: ${REPO_URL}"
@@ -63,6 +75,11 @@ if [[ -f pyproject.toml ]]; then
     exit 3
   fi
 elif [[ -f requirements.txt ]]; then
+  log "Creating virtual environment via uv venv"
+  if ! uv venv 2>&1 | tee /dev/stderr; then
+    log "ERROR: uv venv failed"
+    exit 3
+  fi
   log "Installing requirements via uv pip install -r requirements.txt"
   if ! uv pip install -r requirements.txt 2>&1 | tee /dev/stderr; then
     log "ERROR: uv pip install failed"
@@ -108,8 +125,17 @@ if [[ -z "${run_cmd}" ]]; then
 fi
 
 if [[ -z "${run_cmd}" ]]; then
-  log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh or project script."
-  exit 5
+  # If user provided an explicit run name via env, use it as final fallback
+  if [[ -n "${PYTHON_UV_RUN_NAME:-}" ]]; then
+    log "Using PYTHON_UV_RUN_NAME fallback: ${PYTHON_UV_RUN_NAME}"
+    # Allow passing either a module (-m mod) or a script/entry spec
+    # We treat the env var as a raw argument list
+    # shellcheck disable=SC2206
+    run_cmd=(uv run ${PYTHON_UV_RUN_NAME})
+  else
+    log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh, project script, or set PYTHON_UV_RUN_NAME."
+    exit 5
+  fi
 fi
 
 log "Starting server: ${run_cmd[*]}"
