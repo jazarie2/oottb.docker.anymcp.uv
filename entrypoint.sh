@@ -34,7 +34,7 @@ if [[ -n "${REPO_TOKEN}" ]]; then
       # Already has credentials embedded; do not modify
       REPO_URL_WITH_TOKEN="${REPO_URL}"
     else
-      host=$(echo "${REPO_URL}" | sed -E 's#https?://([^/]+)/.*#\1#')
+      host=$(echo "${REPO_URL}" | sed -E 's#https?://([^/]+).*#\1#')
       user="oauth2"
       if [[ "${host}" == *github.com* ]]; then
         user="x-access-token"
