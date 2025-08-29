@@ -135,9 +135,8 @@ if [[ -z "${run_cmd}" ]]; then
       log "ERROR: PYTHON_UV_RUN_NAME contains potentially dangerous shell characters. Aborting."
       exit 6
     fi
-    # Use eval to properly split quoted arguments
-    eval "set -- ${PYTHON_UV_RUN_NAME}"
-    _uv_run_args=("$@")
+    # Use read -ra to safely split arguments without eval
+    read -ra _uv_run_args <<< "${PYTHON_UV_RUN_NAME}"
     run_cmd=(uv run "${_uv_run_args[@]}")
   else
     log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh, project script, or set PYTHON_UV_RUN_NAME."
