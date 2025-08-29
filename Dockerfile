@@ -25,7 +25,7 @@ WORKDIR /app
 
 COPY entrypoint.sh /entrypoint.sh
 # Normalize line endings to LF in case the file was checked out with CRLF on Windows
-RUN python -c "import pathlib; p=pathlib.Path('/entrypoint.sh'); p.write_bytes(p.read_bytes().replace(b'\r\n', b'\n'))" \
+RUN tr -d '\r' < /entrypoint.sh > /entrypoint.sh.tmp && mv /entrypoint.sh.tmp /entrypoint.sh \
     && chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
