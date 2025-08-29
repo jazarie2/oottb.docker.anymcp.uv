@@ -1,3 +1,4 @@
+# Out Of The Box (OOTB)
 # oottb.docker.anymcp.uv
 
 This Docker image boots a Python environment with `uv`, clones a target repo at container start, installs dependencies, and serves the repo's MCP entrypoint using `uv`. If serving fails, the container exits non-zero and prints logs to stdout/stderr for Kubernetes/Docker to capture.
