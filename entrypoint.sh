@@ -129,9 +129,9 @@ if [[ -z "${run_cmd}" ]]; then
   if [[ -n "${PYTHON_UV_RUN_NAME:-}" ]]; then
     log "Using PYTHON_UV_RUN_NAME fallback: ${PYTHON_UV_RUN_NAME}"
     # Allow passing either a module (-m mod) or a script/entry spec
-    # We treat the env var as a raw argument list
-    # shellcheck disable=SC2206
-    run_cmd=(uv run ${PYTHON_UV_RUN_NAME})
+    # Safely split the env var into an array to avoid command injection
+    read -r -a _uv_run_args <<< "${PYTHON_UV_RUN_NAME}"
+    run_cmd=(uv run "${_uv_run_args[@]}")
   else
     log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh, project script, or set PYTHON_UV_RUN_NAME."
     exit 5
