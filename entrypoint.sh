@@ -35,6 +35,10 @@ if [[ -n "${REPO_TOKEN}" ]]; then
       REPO_URL_WITH_TOKEN="${REPO_URL}"
     else
       host=$(echo "${REPO_URL}" | sed -E 's#https?://([^/]+).*#\1#')
+      if [[ -z "${host}" || "${host}" != *.* ]]; then
+        log "ERROR: Failed to extract host from REPO_URL ('${REPO_URL}'). Exiting."
+        exit 1
+      fi
       user="oauth2"
       if [[ "${host}" == *github.com* ]]; then
         user="x-access-token"
