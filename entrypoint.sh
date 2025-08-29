@@ -130,7 +130,14 @@ if [[ -z "${run_cmd}" ]]; then
     log "Using PYTHON_UV_RUN_NAME fallback: ${PYTHON_UV_RUN_NAME}"
     # Allow passing either a module (-m mod) or a script/entry spec
     # Safely split the env var into an array to avoid command injection
-    read -r -a _uv_run_args <<< "${PYTHON_UV_RUN_NAME}"
+    # Validate for dangerous shell metacharacters
+    if [[ "${PYTHON_UV_RUN_NAME}" =~ [\;\|\&\$\>\<\`\\] ]]; then
+      log "ERROR: PYTHON_UV_RUN_NAME contains potentially dangerous shell characters. Aborting."
+      exit 6
+    fi
+    # Use eval to properly split quoted arguments
+    eval "set -- ${PYTHON_UV_RUN_NAME}"
+    _uv_run_args=("$@")
     run_cmd=(uv run "${_uv_run_args[@]}")
   else
     log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh, project script, or set PYTHON_UV_RUN_NAME."
