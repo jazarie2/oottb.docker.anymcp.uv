@@ -8,6 +8,10 @@ This Docker image boots a Python environment with `uv`, clones a target repo at 
 - `PYTHON_UV_REPO_URL` (required): Git URL of the repo to run.
 - `PYTHON_UV_REPO_TOKEN` (optional): Token for private HTTPS repos. Injected as `oauth2:<token>@` in the URL.
 - `PYTHON_UV_REPO_PROXY` (optional): HTTP/HTTPS proxy URL for git when behind a proxy.
+- `PYTHON_UV_RUN_NAME` (optional): Explicit command to pass to `uv run` as a final fallback. Examples:
+  - `-m http.server 9999`
+  - `your_pkg.cli:main`
+  - `python path/to/script.py`
 
 ## Build
 
@@ -30,6 +34,7 @@ docker run --rm \
   -e PYTHON_UV_REPO_URL="https://gitlab.com/yourorg/your-mcp-repo.git" \
   -e PYTHON_UV_REPO_TOKEN="<token>" \
   -e PYTHON_UV_REPO_PROXY="http://proxy.corp:3128" \
+  -e PYTHON_UV_RUN_NAME="-m http.server 8000" \
   anymcp-uv:latest
 ```
 
