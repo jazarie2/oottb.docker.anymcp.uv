@@ -1,161 +1,129 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log() {
-  echo "[entrypoint] $*" | tee -a /var/log/entrypoint.log >&2
+echo "[entrypoint] Starting anymcp-uv runner"
+
+# Env vars
+: "${PYTHON_UV_REPO_URL?PYTHON_UV_REPO_URL is required}"
+PYTHON_UV_REPO_TOKEN="${PYTHON_UV_REPO_TOKEN:-}"
+PYTHON_UV_REPO_PROXY="${PYTHON_UV_REPO_PROXY:-}"
+PYTHON_UV_RUN_NAME="${PYTHON_UV_RUN_NAME:-}"
+
+WORKDIR="/work"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+maybe_configure_proxy() {
+  if [[ -n "$PYTHON_UV_REPO_PROXY" ]]; then
+    echo "[entrypoint] Configuring git proxy: $PYTHON_UV_REPO_PROXY"
+    git config --global http.proxy "$PYTHON_UV_REPO_PROXY" || true
+    git config --global https.proxy "$PYTHON_UV_REPO_PROXY" || true
+  fi
 }
 
-if [[ "${PYTHON_UV_REPO_URL:-}" == "" ]]; then
-  log "ERROR: PYTHON_UV_REPO_URL is not set. Exiting."
-  exit 1
-fi
-
-REPO_URL="${PYTHON_UV_REPO_URL}"
-REPO_TOKEN="${PYTHON_UV_REPO_TOKEN:-}"
-GIT_PROXY="${PYTHON_UV_REPO_PROXY:-}"
-
-TMP_DIR="/tmp/repo-$(date +%s)-$$"
-mkdir -p "${TMP_DIR}"
-cd "${TMP_DIR}"
-
-# Configure git if proxy is provided and disable interactive prompts
-export GIT_TERMINAL_PROMPT=0
-if [[ -n "${GIT_PROXY}" ]]; then
-  log "Configuring git proxy: ${GIT_PROXY}"
-  git config --global http.proxy "${GIT_PROXY}"
-  git config --global https.proxy "${GIT_PROXY}"
-fi
-
-# Embed token into URL if provided and not already present
-REPO_URL_WITH_TOKEN="${REPO_URL}"
-if [[ -n "${REPO_TOKEN}" ]]; then
-  if [[ "${REPO_URL}" =~ ^https?:// ]]; then
-    if [[ "${REPO_URL}" == *"@"* ]]; then
-      # Already has credentials embedded; do not modify
-      REPO_URL_WITH_TOKEN="${REPO_URL}"
-    else
-      host=$(echo "${REPO_URL}" | sed -E 's#https?://([^/]+).*#\1#')
-      if [[ -z "${host}" || "${host}" != *.* ]]; then
-        log "ERROR: Failed to extract host from REPO_URL ('${REPO_URL}'). Exiting."
-        exit 1
-      fi
-      user="oauth2"
-      if [[ "${host}" == *github.com* ]]; then
-        user="x-access-token"
-      elif [[ "${host}" == *gitlab.* ]]; then
-        user="oauth2"
-      elif [[ "${host}" == *bitbucket.* ]]; then
-        user="x-token-auth"
-      fi
-      REPO_URL_WITH_TOKEN="${REPO_URL/https:\/\//https://${user}:${REPO_TOKEN}@}"
+clone_repo() {
+  local url="$PYTHON_UV_REPO_URL"
+  if [[ -n "$PYTHON_UV_REPO_TOKEN" ]]; then
+    if [[ "$url" =~ ^https:// ]]; then
+      url="https://oauth2:${PYTHON_UV_REPO_TOKEN}@${url#https://}"
     fi
+  fi
+
+  local dest
+  dest="repo-$(date +%s)"
+
+  echo "[entrypoint] Cloning $PYTHON_UV_REPO_URL -> $dest"
+  git clone --depth 1 "$url" "$dest"
+  cd "$dest"
+}
+
+install_deps() {
+  if [[ -f "pyproject.toml" ]]; then
+    echo "[entrypoint] Installing deps via uv sync"
+    uv sync --frozen || uv sync
+  elif [[ -f "requirements.txt" ]]; then
+    echo "[entrypoint] Creating venv and installing deps from requirements.txt"
+    uv venv
+    uv pip install -r requirements.txt
   else
-    # For ssh URLs we cannot inject token; warn user
-    log "WARNING: Token provided but REPO_URL is not https-based. Token will be ignored."
-    REPO_URL_WITH_TOKEN="${REPO_URL}"
+    echo "[entrypoint] No dependency file found; continuing"
   fi
-fi
+}
 
-log "Cloning repository: ${REPO_URL}"
-if ! git clone --depth 1 "${REPO_URL_WITH_TOKEN}" repo 2>&1 | tee /dev/stderr; then
-  log "ERROR: Failed to clone repository ${REPO_URL}"
-  exit 2
-fi
-
-cd repo
-
-# If there is a .tool-versions (asdf) or .python-version, respect it by setting UV_PYTHON
-if [[ -f .python-version ]]; then
-  PY_VER=$(cat .python-version | tr -d "\n\r")
-  export UV_PYTHON="$PY_VER"
-  log "Detected .python-version -> UV_PYTHON=${UV_PYTHON}"
-fi
-
-# If there is a requirements.txt or pyproject.toml, use uv to sync
-if [[ -f pyproject.toml ]]; then
-  log "Installing project dependencies via uv sync"
-  if ! uv sync 2>&1 | tee /dev/stderr; then
-    log "ERROR: uv sync failed"
-    exit 3
+try_run() {
+  # 1) scripts/serve.sh
+  if [[ -x "scripts/serve.sh" ]]; then
+    echo "[entrypoint] Running scripts/serve.sh"
+    exec scripts/serve.sh
   fi
-elif [[ -f requirements.txt ]]; then
-  log "Creating virtual environment via uv venv"
-  if ! uv venv 2>&1 | tee /dev/stderr; then
-    log "ERROR: uv venv failed"
-    exit 3
+
+  # 2) project.scripts: mcp, serve, start
+  if [[ -f "pyproject.toml" ]]; then
+    for s in mcp serve start; do
+      if python - <<'PY'
+import sys
+try:
+    import tomllib
+except Exception:
+    print("0")
+    sys.exit(0)
+from pathlib import Path
+p = Path('pyproject.toml')
+if not p.exists():
+    print("0")
+    sys.exit(0)
+data = tomllib.loads(p.read_text('utf-8'))
+scripts = (data.get('project') or {}).get('scripts') or {}
+print("1" if scripts.get(sys.argv[1]) else "0")
+PY
+      "$s" | grep -q "1"; then
+        echo "[entrypoint] Running pyproject script: $s"
+        exec uv run -- "$s"
+      fi
+    done
   fi
-  log "Installing requirements via uv pip install -r requirements.txt"
-  if ! uv pip install -r requirements.txt 2>&1 | tee /dev/stderr; then
-    log "ERROR: uv pip install failed"
-    exit 4
-  fi
-else
-  log "No dependency spec found (pyproject.toml or requirements.txt). Proceeding."
-fi
 
-# Determine how to serve MCP via uv
-# Priority order:
-# 1) If repo provides an executable serve script at scripts/serve.sh, use it
-# 2) If repo defines an "mcp" script in pyproject [project.scripts], run via uv run -m <entry>
-# 3) If repo has module with __main__ under src/ or package name, attempt uv run -m mcp
-
-serve_script="scripts/serve.sh"
-if [[ -x "${serve_script}" ]]; then
-  log "Running custom serve script: ${serve_script}"
-  exec bash "${serve_script}"
-fi
-
-# Try common entry points
-run_cmd=""
-
-if [[ -f pyproject.toml ]]; then
-  # Try reading project.scripts for a reasonable default
-  if grep -q "\[project.scripts\]" pyproject.toml && grep -E "^(mcp|serve|start)\s*=\s*" pyproject.toml -q; then
-    ENTRY=$(awk '/\[project.scripts\]/{flag=1;next}/\[/{flag=0}flag' pyproject.toml | awk -F'=' '/^(mcp|serve|start)\s*=/{print $2}' | head -n1 | tr -d '" ')
-    if [[ -n "${ENTRY}" ]]; then
-      run_cmd=(uv run ${ENTRY})
+  # 3) explicit run name
+  if [[ -n "$PYTHON_UV_RUN_NAME" ]]; then
+    if [[ -x ".venv/bin/python" && "$PYTHON_UV_RUN_NAME" == python* ]]; then
+      echo "[entrypoint] Running explicit with venv: .venv/bin/$PYTHON_UV_RUN_NAME"
+      # shellcheck disable=SC2086
+      exec .venv/bin/$PYTHON_UV_RUN_NAME
+    else
+      echo "[entrypoint] Running explicit: uv run $PYTHON_UV_RUN_NAME"
+      # shellcheck disable=SC2086
+      exec uv run $PYTHON_UV_RUN_NAME
     fi
   fi
-fi
 
-if [[ -z "${run_cmd}" ]]; then
-  # Fallback common modules
-  for module in mcp app.main main; do
-    if uv run python -c "import importlib,sys; sys.exit(0 if importlib.util.find_spec('${module}') else 1)" >/dev/null 2>&1; then
-      run_cmd=(uv run -m ${module})
-      break
+  # 4) common python modules
+  for mod in mcp app.main main; do
+    if python - <<PY
+import importlib, sys
+mod = sys.argv[1]
+try:
+    importlib.import_module(mod)
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+PY
+    "$mod"; then
+      if [[ -x ".venv/bin/python" ]]; then
+        echo "[entrypoint] Fallback running module with venv: $mod"
+        exec .venv/bin/python -m "$mod"
+      else
+        echo "[entrypoint] Fallback running module: $mod"
+        exec uv run -m "$mod"
+      fi
     fi
   done
-fi
 
-if [[ -z "${run_cmd}" ]]; then
-  # If user provided an explicit run name via env, use it as final fallback
-  if [[ -n "${PYTHON_UV_RUN_NAME:-}" ]]; then
-    log "Using PYTHON_UV_RUN_NAME fallback: ${PYTHON_UV_RUN_NAME}"
-    # Allow passing either a module (-m mod) or a script/entry spec
-    # Safely split the env var into an array to avoid command injection
-    # Validate for dangerous shell metacharacters
-    if [[ "${PYTHON_UV_RUN_NAME}" =~ [\;\|\&\$\>\<\`\\] ]]; then
-      log "ERROR: PYTHON_UV_RUN_NAME contains potentially dangerous shell characters. Aborting."
-      exit 6
-    fi
-    # Use read -ra to safely split arguments without eval
-    read -ra _uv_run_args <<< "${PYTHON_UV_RUN_NAME}"
-    run_cmd=(uv run "${_uv_run_args[@]}")
-  else
-    log "ERROR: Could not determine how to run the cloned repo. Provide scripts/serve.sh, project script, or set PYTHON_UV_RUN_NAME."
-    exit 5
-  fi
-fi
+  echo "[entrypoint] No known entrypoint found; exiting" >&2
+  exit 1
+}
 
-log "Starting server: ${run_cmd[*]}"
-set +e
-"${run_cmd[@]}" 2>&1 | tee /dev/stderr
-exit_code=$?
-set -e
-
-if [[ ${exit_code} -ne 0 ]]; then
-  log "ERROR: Service exited with code ${exit_code}"
-  exit ${exit_code}
-fi
+maybe_configure_proxy
+clone_repo
+install_deps
+try_run
 

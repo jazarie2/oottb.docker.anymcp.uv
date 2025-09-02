@@ -1,34 +1,27 @@
-# syntax=docker/dockerfile:1.7-labs
-
 FROM python:3.12-slim
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/root/.local/bin:${PATH}"
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt/lists \
-    apt-get update \
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       git \
-       curl \
        ca-certificates \
-       tini \
+       curl \
+       git \
        bash \
+       openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (Astral's Python package manager)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install uv (https://astral.sh/uv)
+# Install uv to /root/.local/bin, then symlink to PATH
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -s /root/.local/bin/uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /runner
 
-COPY entrypoint.sh /entrypoint.sh
-# Normalize line endings to LF in case the file was checked out with CRLF on Windows
-RUN tr -d '\r' < /entrypoint.sh > /entrypoint.sh.tmp && mv /entrypoint.sh.tmp /entrypoint.sh \
-    && chmod +x /entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
-
-# No CMD; the entrypoint script determines how to run the cloned repo
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
