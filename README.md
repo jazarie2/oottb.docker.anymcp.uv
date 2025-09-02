@@ -1,14 +1,14 @@
 # Out Of The Box (OOTB)
 # oottb.docker.anymcp.uv
 
-This Docker image boots a Python environment with `uv`, clones a target repo at container start, installs dependencies, and serves the repo's MCP entrypoint using `uv`. If serving fails, the container exits non-zero and prints logs to stdout/stderr for Kubernetes/Docker to capture.
+This Docker image boots a Python environment with `uv`, clones a user-specified repo at container start, installs dependencies, and serves the repo's MCP entrypoint using `uv`. If serving fails, the container exits non-zero and prints logs to stdout/stderr for Kubernetes/Docker to capture.
 
 ## Environment variables
 
 - `PYTHON_UV_REPO_URL` (required): Git URL of the repo to run.
 - `PYTHON_UV_REPO_TOKEN` (optional): Token for private HTTPS repos. Injected as `oauth2:<token>@` in the URL.
 - `PYTHON_UV_REPO_PROXY` (optional): HTTP/HTTPS proxy URL for git when behind a proxy.
-- `PYTHON_UV_RUN_NAME` (optional): Explicit command to pass to `uv run` as a final fallback. Examples:
+- `PYTHON_UV_RUN_NAME` (optional): Either the clone directory name or an explicit command to pass to `uv run` as a fallback. Examples:
   - `-m http.server 9999`
   - `your_pkg.cli:main`
   - `python path/to/script.py`
