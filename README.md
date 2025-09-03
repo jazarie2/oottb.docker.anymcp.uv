@@ -85,7 +85,6 @@ spec:
         ports:
         - containerPort: 8000
 ```
-
 ## License
 
 MIT ©
